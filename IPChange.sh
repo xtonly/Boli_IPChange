@@ -119,7 +119,7 @@ while true; do
     fi
 
     echo -e "\n${CYAN}==================================================================${PLAIN}"
-    echo -e "            ${GREEN}Boil HKT 网络与 IP 综合管理面板${PLAIN}" 1.0
+    echo -e "            ${GREEN}Boil HKT 网络与 IP 综合管理面板${PLAIN}" V 1.0
     echo -e "${CYAN}==================================================================${PLAIN}"
     echo -e " 主网卡名称   : ${YELLOW}${IFACE}${PLAIN}"
     echo -e " 内网 IPv4    : ${YELLOW}${IPV4_LOCAL}${PLAIN} (网关: ${GW4})"
