@@ -28,7 +28,16 @@ if [ ! -f "$TOKEN_FILE" ]; then
 fi
 API_TOKEN=$(cat "$TOKEN_FILE" | tr -d ' \n\r')
 
-# 3. 自动识别主网卡、本地网络与公网 IPv4 信息
+# 3. 检测当前 IPv6 是否可用
+check_ipv6_alive() {
+    if ping6 -c 2 -W 2 2606:4700:4700::1111 >/dev/null 2>&1 || ping6 -c 2 -W 2 ipv6.google.com >/dev/null 2>&1; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# 4. 自动识别主网卡、本地网络与公网 IPv4 信息
 get_net_info() {
     IFACE=$(ip -4 route show default | awk '{print $5}' | head -n1)
     [ -z "$IFACE" ] && IFACE=$(ip -o link show | awk -F': ' '$2 != "lo" {print $2; exit}')
@@ -62,15 +71,6 @@ get_net_info() {
         else
             IPV4_PUBLIC="${RED}获取超时${PLAIN}"
         fi
-    fi
-}
-
-# 4. 检测当前 IPv6 是否可用
-check_ipv6_alive() {
-    if ping6 -c 2 -W 2 2606:4700:4700::1111 >/dev/null 2>&1 || ping6 -c 2 -W 2 ipv6.google.com >/dev/null 2>&1; then
-        return 0
-    else
-        return 1
     fi
 }
 
@@ -133,7 +133,6 @@ fi
 
 # 8. 交互式主面板循环
 while true; do
-    get_net_info
     API_TOKEN=$(cat "$TOKEN_FILE" | tr -d ' \n\r')
     if crontab -l 2>/dev/null | grep -q "$SCRIPT_PATH --cron"; then
         CRON_STATUS="${GREEN}已开启 (每5分钟自动检测保活)${PLAIN}"
@@ -142,7 +141,7 @@ while true; do
     fi
 
     echo -e "\n${CYAN}===============================================================${PLAIN}"
-    echo -e "             ${GREEN}Boil HKT 网络与 IP 综合管理面板${PLAIN} V1.1"
+    echo -e "             ${GREEN}Boil HKT 网络与 IP 综合管理面板${PLAIN} V1.2"
     echo -e "${CYAN}===============================================================${PLAIN}"
     echo -e " 主网卡名称   : ${YELLOW}${IFACE}${PLAIN}"
     echo -e " 内网 IPv4    : ${YELLOW}${IPV4_LOCAL}${PLAIN} (网关: ${GW4})"
@@ -154,29 +153,18 @@ while true; do
     echo -e " 当前 Token   : ${CYAN}${API_TOKEN}${PLAIN}"
     echo -e "${CYAN}---------------------------------------------------------------${PLAIN}"
     echo -e "  ${GREEN}1.${PLAIN} 手动强制刷新获取最新 IPv6 (重刷 SLAAC 前缀 + 绑定 ::8888)"
-    echo -e "  ${GREEN}2.${PLAIN} 仅检测当前 IPv6 连通性 (可用则不刷新，不可用自动修复)"
-    echo -e "  ${GREEN}3.${PLAIN} 开启/关闭 后台定时自动检测更新 IPv6 (Crontab 每5分钟)"
-    echo -e "  ${GREEN}4.${PLAIN} 一键更换公网 IPv4 地址 (调用 Boil changeIP 接口)"
-    echo -e "  ${GREEN}5.${PLAIN} 更新/修改 Boil API Token"
+    echo -e "  ${GREEN}2.${PLAIN} 开启/关闭 后台定时自动检测更新 IPv6 (Crontab 每5分钟)"
+    echo -e "  ${GREEN}3.${PLAIN} 一键更换公网 IPv4 地址 (调用 Boil changeIP 接口)"
+    echo -e "  ${GREEN}4.${PLAIN} 更新/修改 Boil API Token"
     echo -e "  ${GREEN}0.${PLAIN} 退出管理面板"
     echo -e "${CYAN}===============================================================${PLAIN}"
-    read -p "请输入选项数字 [0-5]: " choice
+    read -p "请输入选项数字 [0-4]: " choice
 
     case "$choice" in
         1)
             refresh_ipv6
             ;;
         2)
-            echo -e "${CYAN}正在验证 IPv6 连通性...${PLAIN}"
-            if check_ipv6_alive; then
-                IPV6_STATUS="${GREEN}正常连通 (无需刷新)${PLAIN}"
-                echo -e "${GREEN}当前 IPv6 正常可用，无需刷新！${PLAIN}"
-            else
-                echo -e "${RED}当前 IPv6 不可用，触发自动刷新...${PLAIN}"
-                refresh_ipv6
-            fi
-            ;;
-        3)
             if crontab -l 2>/dev/null | grep -q "$SCRIPT_PATH --cron"; then
                 crontab -l 2>/dev/null | grep -v "$SCRIPT_PATH --cron" | crontab -
                 echo -e "${YELLOW}已关闭 IPv6 后台定时自动检测任务。${PLAIN}"
@@ -185,24 +173,26 @@ while true; do
                 echo -e "${GREEN}已开启！系统将每 5 分钟在后台检测一次 IPv6，断联时自动更新前缀。${PLAIN}"
             fi
             ;;
-        4)
+        3)
             read -p "确定要调用 API 更换当前公网 IPv4 吗？[y/N]: " confirm
             if [[ "$confirm" =~ ^[yY]$ ]]; then
                 echo -e "${YELLOW}>>> 正在请求 Boil API 更换 IPv4...${PLAIN}"
                 RESP=$(curl -s -X POST -H "Authorization: Bearer ${API_TOKEN}" https://ippanel.boil.network/api/v1/changeIP)
                 echo -e "API 响应结果: ${GREEN}${RESP}${PLAIN}"
-                echo -e "${CYAN}等待 3 秒后自动刷新面板公网 IPv4 显示...${PLAIN}"
+                echo -e "${CYAN}等待 3 秒后重新获取最新公网 IPv4...${PLAIN}"
                 sleep 3
+                get_net_info
             else
                 echo -e "已取消操作。"
             fi
             ;;
-        5)
+        4)
             read -p "请输入新的 Bearer Token (当前为 ${API_TOKEN}): " new_token
             new_token=$(echo "$new_token" | tr -d ' \n\r')
             if [ -n "$new_token" ]; then
                 echo "$new_token" > "$TOKEN_FILE"
                 echo -e "${GREEN}Token 已成功更新为: ${new_token}${PLAIN}"
+                get_net_info
             else
                 echo -e "${RED}输入为空，未修改 Token。${PLAIN}"
             fi
@@ -212,7 +202,7 @@ while true; do
             exit 0
             ;;
         *)
-            echo -e "${RED}无效输入，请输入 0 到 5 之间的数字。${PLAIN}"
+            echo -e "${RED}无效输入，请输入 0 到 4 之间的数字。${PLAIN}"
             ;;
     esac
 done
