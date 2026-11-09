@@ -1,6 +1,6 @@
+cat << 'EOF' > IPChange.sh
 #!/bin/bash
 
-# 颜色定义
 GREEN="\033[32m"
 RED="\033[31m"
 YELLOW="\033[33m"
@@ -10,7 +10,6 @@ PLAIN="\033[0m"
 TOKEN_FILE="/etc/boil_token.conf"
 SCRIPT_PATH=$(readlink -f "$0")
 
-# 1. 确保 Root 权限与依赖工具
 if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}错误：请使用 root 用户运行此脚本！${PLAIN}"
     exit 1
@@ -21,13 +20,11 @@ if ! command -v rdisc6 >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; the
     apt-get update && apt-get install -y ndisc6 curl
 fi
 
-# 2. 初始化或读取 API Token
 if [ ! -f "$TOKEN_FILE" ]; then
     echo "63f3e8712edc9523" > "$TOKEN_FILE"
 fi
 API_TOKEN=$(cat "$TOKEN_FILE" | tr -d ' \n\r')
 
-# 3. 自动识别主网卡与本地网络信息（双行拆分 IPv6）
 get_net_info() {
     IFACE=$(ip -4 route show default | awk '{print $5}' | head -n1)
     [ -z "$IFACE" ] && IFACE=$(ip -o link show | awk -F': ' '$2 != "lo" {print $2; exit}')
@@ -35,14 +32,12 @@ get_net_info() {
     GW4=$(ip -4 route show default dev "$IFACE" | awk '{print $3; exit}')
     [ -z "$IPV4_LOCAL" ] && IPV4_LOCAL="192.168.209.37/24" && GW4="192.168.209.1"
 
-    # 分别提取自定义 ::8888 地址与 SLAAC 原生地址
     IPV6_CUSTOM=$(ip -6 addr show dev "$IFACE" scope global | awk '/::8888/ {print $2; exit}')
     IPV6_SLAAC=$(ip -6 addr show dev "$IFACE" scope global | awk '/inet6/ && !/::8888/ {print $2; exit}')
     [ -z "$IPV6_CUSTOM" ] && IPV6_CUSTOM="未绑定"
     [ -z "$IPV6_SLAAC" ] && IPV6_SLAAC="未获取到"
 }
 
-# 4. 检测当前 IPv6 是否可用
 check_ipv6_alive() {
     if ping6 -c 2 -W 2 2606:4700:4700::1111 >/dev/null 2>&1 || ping6 -c 2 -W 2 ipv6.google.com >/dev/null 2>&1; then
         return 0
@@ -51,15 +46,12 @@ check_ipv6_alive() {
     fi
 }
 
-# 5. 核心功能：刷新获取最新 IPv6 并持久化写入配置
 refresh_ipv6() {
     get_net_info
     echo -e "${YELLOW}>>> 正在向宿主机网关请求最新 IPv6 前缀并重写配置...${PLAIN}"
 
-    # 写入自适应动态前缀的 /etc/network/interfaces
     printf "source /etc/network/interfaces.d/*\n\nauto lo\niface lo inet loopback\n\nauto %s\niface %s inet static\n    address %s\n    gateway %s\n    dns-nameservers 1.1.1.1\n    dns-nameservers 8.8.8.8\n    dns-nameservers 2606:4700:4700::1111\n    dns-nameservers 2001:4860:4860::8888\n\niface %s inet6 auto\n    accept_ra 2\n    autoconf 1\n    up sysctl -w net.ipv6.conf.%s.accept_ra=2\n    up sysctl -w net.ipv6.conf.%s.autoconf=1\n    post-up rdisc6 -1 %s >/dev/null 2>&1 || true\n    post-up sleep 2 && PREFIX=\$(ip -6 route show dev %s proto kernel | awk '/::\/64/ && !/^fe80/ {sub(/::\/64/, \"\", \$1); print \$1; exit}') && [ -n \"\$PREFIX\" ] && ip -6 addr add \${PREFIX}::8888/64 dev %s || true\n" "$IFACE" "$IFACE" "$IPV4_LOCAL" "$GW4" "$IFACE" "$IFACE" "$IFACE" "$IFACE" "$IFACE" "$IFACE" > /etc/network/interfaces
 
-    # 清空旧的失效 IPv6 地址与路由
     ip -6 addr flush dev "$IFACE" scope global
     ip -6 route flush dev "$IFACE"
     sysctl -w net.ipv6.conf.all.accept_ra=2 >/dev/null 2>&1
@@ -70,7 +62,6 @@ refresh_ipv6() {
     rdisc6 -1 "$IFACE" >/dev/null 2>&1 || true
     sleep 3
 
-    # 提取新前缀并绑定 ::8888
     NEW_PREFIX=$(ip -6 route show dev "$IFACE" proto kernel | awk '/::\/64/ && !/^fe80/ {sub(/::\/64/, "", $1); print $1; exit}')
     if [ -n "$NEW_PREFIX" ]; then
         ip -6 addr add "${NEW_PREFIX}::8888/64" dev "$IFACE" 2>/dev/null || true
@@ -90,7 +81,6 @@ refresh_ipv6() {
     fi
 }
 
-# 6. 支持定时任务静默调用 (--cron 参数)
 if [ "$1" == "--cron" ]; then
     if ! check_ipv6_alive; then
         refresh_ipv6 >/var/log/boil-ipv6-refresh.log 2>&1
@@ -98,17 +88,13 @@ if [ "$1" == "--cron" ]; then
     exit 0
 fi
 
-# 7. 启动时自动验证当前 IPv6 状态（可用则不刷新，不可用则自动获取）
-echo -e "${CYAN}正在检测当前主机 IPv6 连通性，请稍候...${PLAIN}"
 get_net_info
 if check_ipv6_alive; then
     IPV6_STATUS="${GREEN}正常连通 (无需刷新)${PLAIN}"
 else
-    echo -e "${RED}检测到当前 IPv6 不可用或前缀已过期，正在自动为您获取最新 IPv6...${PLAIN}"
     refresh_ipv6
 fi
 
-# 8. 交互式主面板循环
 while true; do
     get_net_info
     API_TOKEN=$(cat "$TOKEN_FILE" | tr -d ' \n\r')
@@ -140,16 +126,12 @@ while true; do
     read -p "请输入选项数字 [0-6]: " choice
 
     case "$choice" in
-        1)
-            refresh_ipv6
-            ;;
+        1) refresh_ipv6 ;;
         2)
-            echo -e "${CYAN}正在验证 IPv6 连通性...${PLAIN}"
             if check_ipv6_alive; then
                 IPV6_STATUS="${GREEN}正常连通 (无需刷新)${PLAIN}"
                 echo -e "${GREEN}当前 IPv6 正常可用，无需刷新！${PLAIN}"
             else
-                echo -e "${RED}当前 IPv6 不可用，触发自动刷新...${PLAIN}"
                 refresh_ipv6
             fi
             ;;
@@ -163,7 +145,6 @@ while true; do
             fi
             ;;
         4)
-            echo -e "${CYAN}>>> 正在请求 Boil API 获取当前 IPv4 信息...${PLAIN}"
             RESP=$(curl -s -X POST -H "Authorization: Bearer ${API_TOKEN}" https://ippanel.boil.network/api/v1/getIP)
             echo -e "API 响应结果: ${GREEN}${RESP}${PLAIN}"
             echo -e "本机实时检测公网 IPv4: ${YELLOW}$(curl -s -4 --max-time 5 ip.sb || echo '获取超时')${PLAIN}"
@@ -171,10 +152,8 @@ while true; do
         5)
             read -p "确定要调用 API 更换当前公网 IPv4 吗？[y/N]: " confirm
             if [[ "$confirm" =~ ^[yY]$ ]]; then
-                echo -e "${YELLOW}>>> 正在请求 Boil API 更换 IPv4...${PLAIN}"
                 RESP=$(curl -s -X POST -H "Authorization: Bearer ${API_TOKEN}" https://ippanel.boil.network/api/v1/changeIP)
                 echo -e "API 响应结果: ${GREEN}${RESP}${PLAIN}"
-                echo -e "${CYAN}等待 3 秒后查询最新公网 IPv4...${PLAIN}"
                 sleep 3
                 echo -e "最新公网 IPv4: ${GREEN}$(curl -s -4 --max-time 5 ip.sb || echo '正在切换中，请稍后按 4 查询')${PLAIN}"
             else
@@ -192,7 +171,7 @@ while true; do
             fi
             ;;
         0)
-            echo -e "${GREEN}已退出面板。下次可直接运行 ${SCRIPT_PATH} 启动！${PLAIN}"
+            echo -e "${GREEN}已退出面板。${PLAIN}"
             exit 0
             ;;
         *)
@@ -200,3 +179,5 @@ while true; do
             ;;
     esac
 done
+EOF
+chmod +x IPChange.sh
