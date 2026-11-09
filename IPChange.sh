@@ -8,7 +8,7 @@ CYAN="\033[36m"
 PLAIN="\033[0m"
 
 TOKEN_FILE="/etc/boil_token.conf"
-SCRIPT_PATH="/root/boil-net.sh"
+SCRIPT_PATH=$(readlink -f "$0")
 
 # 1. 确保 Root 权限与依赖工具
 if [ "$EUID" -ne 0 ]; then
@@ -27,7 +27,7 @@ if [ ! -f "$TOKEN_FILE" ]; then
 fi
 API_TOKEN=$(cat "$TOKEN_FILE" | tr -d ' \n\r')
 
-# 3. 自动识别主网卡与本地网络信息
+# 3. 自动识别主网卡与本地网络信息（双行拆分 IPv6）
 get_net_info() {
     IFACE=$(ip -4 route show default | awk '{print $5}' | head -n1)
     [ -z "$IFACE" ] && IFACE=$(ip -o link show | awk -F': ' '$2 != "lo" {print $2; exit}')
@@ -35,9 +35,11 @@ get_net_info() {
     GW4=$(ip -4 route show default dev "$IFACE" | awk '{print $3; exit}')
     [ -z "$IPV4_LOCAL" ] && IPV4_LOCAL="192.168.209.37/24" && GW4="192.168.209.1"
 
-    # 获取当前网卡上的所有公网 IPv6
-    IPV6_LIST=$(ip -6 addr show dev "$IFACE" scope global | awk '/inet6/ {print $2}' | tr '\n' ' ')
-    [ -z "$IPV6_LIST" ] && IPV6_LIST="未获取到公网 IPv6"
+    # 分别提取自定义 ::8888 地址与 SLAAC 原生地址
+    IPV6_CUSTOM=$(ip -6 addr show dev "$IFACE" scope global | awk '/::8888/ {print $2; exit}')
+    IPV6_SLAAC=$(ip -6 addr show dev "$IFACE" scope global | awk '/inet6/ && !/::8888/ {print $2; exit}')
+    [ -z "$IPV6_CUSTOM" ] && IPV6_CUSTOM="未绑定"
+    [ -z "$IPV6_SLAAC" ] && IPV6_SLAAC="未获取到"
 }
 
 # 4. 检测当前 IPv6 是否可用
@@ -116,16 +118,17 @@ while true; do
         CRON_STATUS="${YELLOW}未开启${PLAIN}"
     fi
 
-    echo -e "\n${CYAN}==========================================================================================${PLAIN}"
-    echo -e "                           ${GREEN}Boil HKT 网络与 IP 综合管理面板${PLAIN}"
-    echo -e "${CYAN}==========================================================================================${PLAIN}"
+    echo -e "\n${CYAN}============================================================${PLAIN}"
+    echo -e "            ${GREEN}Boil HKT 网络与 IP 综合管理面板${PLAIN}"
+    echo -e "${CYAN}============================================================${PLAIN}"
     echo -e " 主网卡名称   : ${YELLOW}${IFACE}${PLAIN}"
     echo -e " 内网 IPv4    : ${YELLOW}${IPV4_LOCAL}${PLAIN} (网关: ${GW4})"
     echo -e " IPv6 状态    : ${IPV6_STATUS}"
-    echo -e " 当前 IPv6    : ${GREEN}${IPV6_LIST}${PLAIN}"
+    echo -e " 自定义 IPv6  : ${GREEN}${IPV6_CUSTOM}${PLAIN}"
+    echo -e " 原生 IPv6    : ${GREEN}${IPV6_SLAAC}${PLAIN}"
     echo -e " 定时保活状态 : ${CRON_STATUS}"
     echo -e " 当前 Token   : ${CYAN}${API_TOKEN}${PLAIN}"
-    echo -e "${CYAN}------------------------------------------------------------------------------------------${PLAIN}"
+    echo -e "${CYAN}------------------------------------------------------------${PLAIN}"
     echo -e "  ${GREEN}1.${PLAIN} 手动强制刷新获取最新 IPv6 (重刷 SLAAC 前缀 + 绑定 ::8888)"
     echo -e "  ${GREEN}2.${PLAIN} 仅检测当前 IPv6 连通性 (可用则不刷新，不可用自动修复)"
     echo -e "  ${GREEN}3.${PLAIN} 开启/关闭 后台定时自动检测更新 IPv6 (Crontab 每5分钟)"
@@ -133,7 +136,7 @@ while true; do
     echo -e "  ${GREEN}5.${PLAIN} 一键更换公网 IPv4 地址 (调用 Boil changeIP 接口)"
     echo -e "  ${GREEN}6.${PLAIN} 更新/修改 Boil API Token"
     echo -e "  ${GREEN}0.${PLAIN} 退出管理面板"
-    echo -e "${CYAN}==========================================================================================${PLAIN}"
+    echo -e "${CYAN}============================================================${PLAIN}"
     read -p "请输入选项数字 [0-6]: " choice
 
     case "$choice" in
@@ -189,7 +192,7 @@ while true; do
             fi
             ;;
         0)
-            echo -e "${GREEN}已退出面板。下次可直接输入 boil 或 /root/boil-net.sh 启动！${PLAIN}"
+            echo -e "${GREEN}已退出面板。下次可直接运行 ${SCRIPT_PATH} 启动！${PLAIN}"
             exit 0
             ;;
         *)
