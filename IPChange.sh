@@ -118,9 +118,9 @@ while true; do
         CRON_STATUS="${YELLOW}未开启${PLAIN}"
     fi
 
-    echo -e "\n${CYAN}==================================================================${PLAIN}"
-    echo -e "            ${GREEN}Boil HKT 网络与 IP 综合管理面板${PLAIN}" V 1.0
-    echo -e "${CYAN}==================================================================${PLAIN}"
+    echo -e "\n${CYAN}================================================================${PLAIN}"
+    echo -e "            ${GREEN}Boil HKT 网络与 IP 综合管理面板${PLAIN}" V1.0
+    echo -e "${CYAN}================================================================${PLAIN}"
     echo -e " 主网卡名称   : ${YELLOW}${IFACE}${PLAIN}"
     echo -e " 内网 IPv4    : ${YELLOW}${IPV4_LOCAL}${PLAIN} (网关: ${GW4})"
     echo -e " IPv6 状态    : ${IPV6_STATUS}"
@@ -128,7 +128,7 @@ while true; do
     echo -e " 原生 IPv6    : ${GREEN}${IPV6_SLAAC}${PLAIN}"
     echo -e " 定时保活状态 : ${CRON_STATUS}"
     echo -e " 当前 Token   : ${CYAN}${API_TOKEN}${PLAIN}"
-    echo -e "${CYAN}------------------------------------------------------------------${PLAIN}"
+    echo -e "${CYAN}----------------------------------------------------------------${PLAIN}"
     echo -e "  ${GREEN}1.${PLAIN} 手动强制刷新获取最新 IPv6 (重刷 SLAAC 前缀 + 绑定 ::8888)"
     echo -e "  ${GREEN}2.${PLAIN} 仅检测当前 IPv6 连通性 (可用则不刷新，不可用自动修复)"
     echo -e "  ${GREEN}3.${PLAIN} 开启/关闭 后台定时自动检测更新 IPv6 (Crontab 每5分钟)"
@@ -136,7 +136,7 @@ while true; do
     echo -e "  ${GREEN}5.${PLAIN} 一键更换公网 IPv4 地址 (调用 Boil changeIP 接口)"
     echo -e "  ${GREEN}6.${PLAIN} 更新/修改 Boil API Token"
     echo -e "  ${GREEN}0.${PLAIN} 退出管理面板"
-    echo -e "${CYAN}==================================================================${PLAIN}"
+    echo -e "${CYAN}================================================================${PLAIN}"
     read -p "请输入选项数字 [0-6]: " choice
 
     case "$choice" in
