@@ -22,4 +22,4 @@
 请使用 `root` 用户登录 SSH，复制以下命令一键安装依赖并启动管理面板：
 
 ```bash
-apt update -y && apt install -y dnsutils curl ndisc6 && FILE="IPChange.sh" && curl -sSL "https://raw.githubusercontent.com/xtonly/Boli_IPChange/main/IPChange.sh" | tr -d '\r' > $FILE && chmod +x $FILE && ./$FILE
+apt update -y && apt install -y dnsutils curl ndisc6 && FILE="IPChange.sh" && curl -sSL -H "Accept: application/vnd.github.v3.raw" -o $FILE "https://api.github.com/repos/xtonly/Boli_IPChange/contents/IPChange.sh?ref=main" && chmod +x $FILE && ./$FILE
