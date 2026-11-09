@@ -9,6 +9,7 @@ PLAIN="\033[0m"
 
 TOKEN_FILE="/etc/boil_token.conf"
 SCRIPT_PATH=$(readlink -f "$0")
+RUN_MODE="$1"
 
 # 1. 确保 Root 权限与依赖工具
 if [ "$EUID" -ne 0 ]; then
@@ -27,7 +28,7 @@ if [ ! -f "$TOKEN_FILE" ]; then
 fi
 API_TOKEN=$(cat "$TOKEN_FILE" | tr -d ' \n\r')
 
-# 3. 自动识别主网卡与本地网络信息（双行拆分 IPv6）
+# 3. 自动识别主网卡、本地网络与公网 IPv4 信息
 get_net_info() {
     IFACE=$(ip -4 route show default | awk '{print $5}' | head -n1)
     [ -z "$IFACE" ] && IFACE=$(ip -o link show | awk -F': ' '$2 != "lo" {print $2; exit}')
@@ -40,6 +41,28 @@ get_net_info() {
     IPV6_SLAAC=$(ip -6 addr show dev "$IFACE" scope global | awk '/inet6/ && !/::8888/ {print $2; exit}')
     [ -z "$IPV6_CUSTOM" ] && IPV6_CUSTOM="未绑定"
     [ -z "$IPV6_SLAAC" ] && IPV6_SLAAC="未获取到"
+
+    # 非定时任务模式下，后台静默获取当前公网 IPv4
+    if [ "$RUN_MODE" != "--cron" ]; then
+        API_TOKEN=$(cat "$TOKEN_FILE" 2>/dev/null | tr -d ' \n\r')
+        # 调取 Boil 官方 getIP 接口并提取 IPv4
+        API_RESP=$(curl -s --max-time 3 -X POST -H "Authorization: Bearer ${API_TOKEN}" https://ippanel.boil.network/api/v1/getIP)
+        IPV4_API=$(echo "$API_RESP" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -n1)
+
+        # 实时检测本机出口公网 IPv4
+        IPV4_REAL=$(curl -s -4 --max-time 3 ip.sb | tr -d ' \n\r')
+        [[ ! "$IPV4_REAL" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && IPV4_REAL=$(curl -s -4 --max-time 3 ifconfig.me | tr -d ' \n\r')
+
+        if [ -n "$IPV4_REAL" ] && [ -n "$IPV4_API" ] && [ "$IPV4_REAL" != "$IPV4_API" ]; then
+            IPV4_PUBLIC="${GREEN}${IPV4_REAL}${PLAIN} ${YELLOW}(面板记录: ${IPV4_API})${PLAIN}"
+        elif [ -n "$IPV4_REAL" ]; then
+            IPV4_PUBLIC="${GREEN}${IPV4_REAL}${PLAIN}"
+        elif [ -n "$IPV4_API" ]; then
+            IPV4_PUBLIC="${GREEN}${IPV4_API}${PLAIN} ${CYAN}(API记录)${PLAIN}"
+        else
+            IPV4_PUBLIC="${RED}获取超时${PLAIN}"
+        fi
+    fi
 }
 
 # 4. 检测当前 IPv6 是否可用
@@ -91,7 +114,7 @@ refresh_ipv6() {
 }
 
 # 6. 支持定时任务静默调用 (--cron 参数)
-if [ "$1" == "--cron" ]; then
+if [ "$RUN_MODE" == "--cron" ]; then
     if ! check_ipv6_alive; then
         refresh_ipv6 >/var/log/boil-ipv6-refresh.log 2>&1
     fi
@@ -99,7 +122,7 @@ if [ "$1" == "--cron" ]; then
 fi
 
 # 7. 启动时自动验证当前 IPv6 状态（可用则不刷新，不可用则自动获取）
-echo -e "${CYAN}正在检测当前主机 IPv6 连通性，请稍候...${PLAIN}"
+echo -e "${CYAN}正在检测当前主机网络状态与公网信息，请稍候...${PLAIN}"
 get_net_info
 if check_ipv6_alive; then
     IPV6_STATUS="${GREEN}正常连通 (无需刷新)${PLAIN}"
@@ -119,10 +142,11 @@ while true; do
     fi
 
     echo -e "\n${CYAN}===============================================================${PLAIN}"
-    echo -e "             ${GREEN}Boil HKT 网络与 IP 综合管理面板${PLAIN}" V1.0
+    echo -e "             ${GREEN}Boil HKT 网络与 IP 综合管理面板${PLAIN} V1.1"
     echo -e "${CYAN}===============================================================${PLAIN}"
     echo -e " 主网卡名称   : ${YELLOW}${IFACE}${PLAIN}"
     echo -e " 内网 IPv4    : ${YELLOW}${IPV4_LOCAL}${PLAIN} (网关: ${GW4})"
+    echo -e " 公网 IPv4    : ${IPV4_PUBLIC}"
     echo -e " IPv6 状态    : ${IPV6_STATUS}"
     echo -e " 自定义 IPv6  : ${GREEN}${IPV6_CUSTOM}${PLAIN}"
     echo -e " 原生 IPv6    : ${GREEN}${IPV6_SLAAC}${PLAIN}"
@@ -132,12 +156,11 @@ while true; do
     echo -e "  ${GREEN}1.${PLAIN} 手动强制刷新获取最新 IPv6 (重刷 SLAAC 前缀 + 绑定 ::8888)"
     echo -e "  ${GREEN}2.${PLAIN} 仅检测当前 IPv6 连通性 (可用则不刷新，不可用自动修复)"
     echo -e "  ${GREEN}3.${PLAIN} 开启/关闭 后台定时自动检测更新 IPv6 (Crontab 每5分钟)"
-    echo -e "  ${GREEN}4.${PLAIN} 查询当前公网 IPv4 信息 (调用 Boil getIP 接口)"
-    echo -e "  ${GREEN}5.${PLAIN} 一键更换公网 IPv4 地址 (调用 Boil changeIP 接口)"
-    echo -e "  ${GREEN}6.${PLAIN} 更新/修改 Boil API Token"
+    echo -e "  ${GREEN}4.${PLAIN} 一键更换公网 IPv4 地址 (调用 Boil changeIP 接口)"
+    echo -e "  ${GREEN}5.${PLAIN} 更新/修改 Boil API Token"
     echo -e "  ${GREEN}0.${PLAIN} 退出管理面板"
     echo -e "${CYAN}===============================================================${PLAIN}"
-    read -p "请输入选项数字 [0-6]: " choice
+    read -p "请输入选项数字 [0-5]: " choice
 
     case "$choice" in
         1)
@@ -163,25 +186,18 @@ while true; do
             fi
             ;;
         4)
-            echo -e "${CYAN}>>> 正在请求 Boil API 获取当前 IPv4 信息...${PLAIN}"
-            RESP=$(curl -s -X POST -H "Authorization: Bearer ${API_TOKEN}" https://ippanel.boil.network/api/v1/getIP)
-            echo -e "API 响应结果: ${GREEN}${RESP}${PLAIN}"
-            echo -e "本机实时检测公网 IPv4: ${YELLOW}$(curl -s -4 --max-time 5 ip.sb || echo '获取超时')${PLAIN}"
-            ;;
-        5)
             read -p "确定要调用 API 更换当前公网 IPv4 吗？[y/N]: " confirm
             if [[ "$confirm" =~ ^[yY]$ ]]; then
                 echo -e "${YELLOW}>>> 正在请求 Boil API 更换 IPv4...${PLAIN}"
                 RESP=$(curl -s -X POST -H "Authorization: Bearer ${API_TOKEN}" https://ippanel.boil.network/api/v1/changeIP)
                 echo -e "API 响应结果: ${GREEN}${RESP}${PLAIN}"
-                echo -e "${CYAN}等待 3 秒后查询最新公网 IPv4...${PLAIN}"
+                echo -e "${CYAN}等待 3 秒后自动刷新面板公网 IPv4 显示...${PLAIN}"
                 sleep 3
-                echo -e "最新公网 IPv4: ${GREEN}$(curl -s -4 --max-time 5 ip.sb || echo '正在切换中，请稍后按 4 查询')${PLAIN}"
             else
                 echo -e "已取消操作。"
             fi
             ;;
-        6)
+        5)
             read -p "请输入新的 Bearer Token (当前为 ${API_TOKEN}): " new_token
             new_token=$(echo "$new_token" | tr -d ' \n\r')
             if [ -n "$new_token" ]; then
@@ -196,7 +212,7 @@ while true; do
             exit 0
             ;;
         *)
-            echo -e "${RED}无效输入，请输入 0 到 6 之间的数字。${PLAIN}"
+            echo -e "${RED}无效输入，请输入 0 到 5 之间的数字。${PLAIN}"
             ;;
     esac
 done
